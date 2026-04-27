@@ -17,6 +17,7 @@ import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.BlockState;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.Powerable;
 import org.bukkit.block.data.type.Jukebox;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
@@ -25,18 +26,27 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
+import net.coreprotect.CoreProtect;
 import net.coreprotect.bukkit.BukkitAdapter;
 import net.coreprotect.config.Config;
 import net.coreprotect.config.ConfigHandler;
 import net.coreprotect.database.logger.ItemLogger;
 import net.coreprotect.model.BlockGroup;
+import net.coreprotect.thread.Scheduler;
 import net.coreprotect.utility.BlockUtils;
+import net.coreprotect.utility.BlockTypeUtils;
 import net.coreprotect.utility.ItemUtils;
 import net.coreprotect.utility.MaterialUtils;
 import net.coreprotect.utility.Teleport;
 import net.coreprotect.utility.WorldUtils;
 
 public class RollbackProcessor {
+
+    private static void normalizeRollbackBlockData(BlockData blockData) {
+        if (blockData instanceof Powerable && blockData.getMaterial() == Material.NOTE_BLOCK) {
+            ((Powerable) blockData).setPowered(false);
+        }
+    }
 
     /**
      * Process data for a specific chunk
@@ -72,7 +82,6 @@ public class RollbackProcessor {
 
             // Process blocks
             for (Object[] row : data) {
-                int unixtimestamp = (int) (System.currentTimeMillis() / 1000L);
                 int[] rollbackHashData = ConfigHandler.rollbackHash.get(finalUserString);
                 int itemCount = rollbackHashData[0];
                 int blockCount = rollbackHashData[1];
@@ -100,19 +109,25 @@ public class RollbackProcessor {
                 BlockData blockData = null;
                 if (blockDataString != null && blockDataString.contains(":")) {
                     try {
-                        blockData = Bukkit.getServer().createBlockData(blockDataString);
+                        blockData = BlockTypeUtils.createBlockDataFromString(blockDataString);
+                        if (blockData == null) {
+                            blockData = Bukkit.getServer().createBlockData(blockDataString);
+                        }
                     }
                     catch (Exception e) {
                         // corrupt BlockData, let the server automatically set the BlockData instead
                     }
                 }
-
                 BlockData rawBlockData = null;
                 if (blockData != null) {
                     rawBlockData = blockData.clone();
                 }
-                if (rawBlockData == null && rowType != null && rowType.isBlock()) {
-                    rawBlockData = BlockUtils.createBlockData(rowType);
+                if (rawBlockData == null) {
+                    rawBlockData = BlockUtils.createBlockData(rowTypeRaw);
+                }
+                if (rowType == Material.NOTE_BLOCK) {
+                    normalizeRollbackBlockData(blockData);
+                    normalizeRollbackBlockData(rawBlockData);
                 }
 
                 String rowUser = ConfigHandler.playerIdCacheReversed.get((Integer) row[2]);
@@ -210,7 +225,7 @@ public class RollbackProcessor {
                         BlockData checkData = rowType == Material.AIR ? blockData : rawBlockData;
                         if (checkData != null) {
                             if (checkData.getAsString().equals(pendingChangeData.getAsString()) || checkData instanceof org.bukkit.block.data.MultipleFacing || checkData instanceof org.bukkit.block.data.type.Stairs || checkData instanceof org.bukkit.block.data.type.RedstoneWire) {
-                                if (rowType != Material.CHEST && rowType != Material.TRAPPED_CHEST) { // always update double chests
+                                if (rowType != Material.CHEST && rowType != Material.TRAPPED_CHEST && !BukkitAdapter.ADAPTER.isCopperChest(rowType)) { // always update double chests
                                     changeBlock = false;
                                 }
                             }
@@ -234,7 +249,7 @@ public class RollbackProcessor {
                         }
                     }
 
-                    if (countBlock && RollbackBlockHandler.processBlockChange(block, row, rollbackType, clearInventories, chunkChanges, countBlock, oldTypeMaterial, pendingChangeType, pendingChangeData, finalUserString, rawBlockData, changeType, changeBlockData, meta != null ? new ArrayList<>(meta) : null, blockData, rowUser, rowType, rowX, rowY, rowZ, rowTypeRaw, rowData, rowAction, rowWorldId, BlockUtils.byteDataToString((byte[]) row[13], rowTypeRaw))) {
+                    if (RollbackBlockHandler.processBlockChange(bukkitWorld, block, row, rollbackType, clearInventories, chunkChanges, countBlock, oldTypeMaterial, pendingChangeType, pendingChangeData, finalUserString, rawBlockData, changeType, changeBlock, changeBlockData, meta != null ? new ArrayList<>(meta) : null, blockData, rowUser, rowType, rowX, rowY, rowZ, rowTypeRaw, rowData, rowAction, rowWorldId, BlockUtils.byteDataToString((byte[]) row[13], rowTypeRaw)) && countBlock) {
                         blockCount++;
                     }
                 }
@@ -278,7 +293,11 @@ public class RollbackProcessor {
                 int rolledBackInventory = MaterialUtils.rolledBack((Integer) row[9], true);
                 if (rowType != null) {
                     if (inventoryRollback && ((rollbackType == 0 && rolledBackInventory == 0) || (rollbackType == 1 && rolledBackInventory == 1))) {
-                        Material inventoryItem = ItemUtils.itemFilter(rowType, ((Integer) row[14] == 0));
+                        Material inventoryItem = ItemUtils.inventoryItemFilter(rowType, ((Integer) row[14] == 0));
+                        if (inventoryItem == null) {
+                            continue;
+                        }
+
                         int rowUserId = (Integer) row[2];
                         String rowUser = ConfigHandler.playerIdCacheReversed.get(rowUserId);
                         if (rowUser == null) {
@@ -432,7 +451,7 @@ public class RollbackProcessor {
                     int chunkZ = playerLocation.getBlockZ() >> 4;
 
                     if (bukkitRollbackWorld.getName().equals(playerWorld) && chunkX == finalChunkX && chunkZ == finalChunkZ) {
-                        Teleport.performSafeTeleport(player, playerLocation, false);
+                        Scheduler.runTask(CoreProtect.getInstance(), () -> Teleport.performSafeTeleport(player, playerLocation, false), player);
                     }
                 }
             }

@@ -54,65 +54,7 @@ import net.coreprotect.utility.entity.HangingUtil;
 
 public class RollbackBlockHandler extends Queue {
 
-    /**
-     * Handle block-related rollback operations
-     * 
-     * @param block
-     *            The block to modify
-     * @param row
-     *            Block data from the database (used only for specific operations)
-     * @param rollbackType
-     *            The type of rollback (0=rollback, 1=restore)
-     * @param clearInventories
-     *            Whether to clear container inventories
-     * @param chunkChanges
-     *            Map of block changes to apply
-     * @param countBlock
-     *            Whether to count this block in stats
-     * @param oldTypeMaterial
-     *            The previous material type
-     * @param pendingChangeType
-     *            The pending change material type
-     * @param pendingChangeData
-     *            The pending change block data
-     * @param finalUserString
-     *            The username for this rollback
-     * @param rawBlockData
-     *            The raw block data
-     * @param changeType
-     *            The current block type
-     * @param changeBlockData
-     *            The current block data
-     * @param meta
-     *            Block metadata
-     * @param blockData
-     *            The processed block data
-     * @param rowUser
-     *            The username associated with this block change
-     * @param rowType
-     *            The material type for this block change
-     * @param rowX
-     *            The X coordinate
-     * @param rowY
-     *            The Y coordinate
-     * @param rowZ
-     *            The Z coordinate
-     * @param rowTypeRaw
-     *            The raw type value
-     * @param rowData
-     *            The data value
-     * @param rowAction
-     *            The action value
-     * @param rowWorldId
-     *            The world ID
-     * @param blockDataString
-     *            The block data as a string
-     * @return Updated count status
-     */
-    public static boolean processBlockChange(Block block, Object[] row, int rollbackType, boolean clearInventories, Map<Block, BlockData> chunkChanges, boolean countBlock, Material oldTypeMaterial, Material pendingChangeType, BlockData pendingChangeData, String finalUserString, BlockData rawBlockData, Material changeType, BlockData changeBlockData, ArrayList<Object> meta, BlockData blockData, String rowUser, Material rowType, int rowX, int rowY, int rowZ, int rowTypeRaw, int rowData, int rowAction, int rowWorldId, String blockDataString) {
-
-        boolean changeBlock = true;
-        World bukkitWorld = block.getWorld();
+    public static boolean processBlockChange(World bukkitWorld, Block block, Object[] row, int rollbackType, boolean clearInventories, Map<Block, BlockData> chunkChanges, boolean countBlock, Material oldTypeMaterial, Material pendingChangeType, BlockData pendingChangeData, String finalUserString, BlockData rawBlockData, Material changeType, boolean changeBlock, BlockData changeBlockData, ArrayList<Object> meta, BlockData blockData, String rowUser, Material rowType, int rowX, int rowY, int rowZ, int rowTypeRaw, int rowData, int rowAction, int rowWorldId, String blockDataString) {
         int unixtimestamp = (int) (System.currentTimeMillis() / 1000L);
 
         try {
@@ -133,6 +75,15 @@ public class RollbackBlockHandler extends Queue {
                     rowType = (technicalPiston.getType() == org.bukkit.block.data.type.TechnicalPiston.Type.STICKY ? Material.STICKY_PISTON : Material.PISTON);
                     blockData = rowType.createBlockData();
                     ((Piston) blockData).setFacing(technicalPiston.getFacing());
+                }
+
+                if (rowType == null) {
+                    if (blockData != null) {
+                        BlockUtils.prepareTypeAndData(chunkChanges, block, null, blockData, true);
+                        return countBlock;
+                    }
+
+                    return false;
                 }
 
                 if ((rowType == Material.AIR) && ((BukkitAdapter.ADAPTER.isItemFrame(oldTypeMaterial)) || (oldTypeMaterial == Material.PAINTING))) {
@@ -259,11 +210,12 @@ public class RollbackBlockHandler extends Queue {
 
                     if (remove) {
                         boolean physics = true;
-                        if ((changeType == Material.NETHER_PORTAL) || changeBlockData instanceof MultipleFacing || changeBlockData instanceof Snow || changeBlockData instanceof Stairs || changeBlockData instanceof RedstoneWire || changeBlockData instanceof Chest) {
+                        BlockData removeBlockData = pendingChangeData != null ? pendingChangeData : changeBlockData;
+                        if ((changeType == Material.NETHER_PORTAL) || removeBlockData instanceof MultipleFacing || removeBlockData instanceof Snow || removeBlockData instanceof Stairs || removeBlockData instanceof RedstoneWire || removeBlockData instanceof Chest) {
                             physics = true;
                         }
-                        else if (changeBlockData instanceof Bisected && !(changeBlockData instanceof TrapDoor)) {
-                            Bisected bisected = (Bisected) changeBlockData;
+                        else if (removeBlockData instanceof Bisected && !(removeBlockData instanceof TrapDoor)) {
+                            Bisected bisected = (Bisected) removeBlockData;
                             Location bisectLocation = block.getLocation().clone();
                             if (bisected.getHalf() == Half.TOP) {
                                 bisectLocation.setY(bisectLocation.getY() - 1);
@@ -283,8 +235,8 @@ public class RollbackBlockHandler extends Queue {
                                 }
                             }
                         }
-                        else if (changeBlockData instanceof Bed) {
-                            Bed bed = (Bed) changeBlockData;
+                        else if (removeBlockData instanceof Bed) {
+                            Bed bed = (Bed) removeBlockData;
                             if (bed.getPart() == Part.FOOT) {
                                 Block adjacentBlock = block.getRelative(bed.getFacing());
                                 BlockUtils.prepareTypeAndData(chunkChanges, adjacentBlock, rowType, null, false);
@@ -358,6 +310,10 @@ public class RollbackBlockHandler extends Queue {
                     return false;
                 }
                 else if ((rowType == Material.WATER)) {
+                    if (bukkitWorld.getEnvironment() == World.Environment.NETHER) {
+                        return false;
+                    }
+
                     if (pendingChangeData instanceof Waterlogged) {
                         Waterlogged waterlogged = (Waterlogged) pendingChangeData;
                         waterlogged.setWaterlogged(true);
