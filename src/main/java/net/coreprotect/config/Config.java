@@ -12,12 +12,14 @@ import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 
 import net.coreprotect.CoreProtect;
+import net.coreprotect.consumer.Consumer;
 import net.coreprotect.language.Language;
 import net.coreprotect.thread.Scheduler;
 import net.coreprotect.utility.VersionUtils;
@@ -35,6 +37,13 @@ public class Config extends Language {
     private Config defaults;
 
     public String DONATION_KEY;
+    public String DATABASE_TYPE;
+    public String CLICKHOUSE_HOST;
+    public String CLICKHOUSE_DATABASE;
+    public String CLICKHOUSE_USERNAME;
+    public String CLICKHOUSE_PASSWORD;
+    public String DUCKDB_MEMORY_LIMIT;
+    public String DUCKDB_MAX_TEMP_DIRECTORY_SIZE;
     public String PREFIX;
     public String MYSQL_HOST;
     public String MYSQL_DATABASE;
@@ -44,6 +53,7 @@ public class Config extends Language {
     public String AUTO_PURGE;
     public String AUTO_PURGE_TIME;
     public boolean ENABLE_SSL;
+    public boolean CLICKHOUSE_TLS;
     public boolean DISABLE_WAL;
     public boolean HOVER_EVENTS;
     public boolean DATABASE_LOCK;
@@ -95,19 +105,30 @@ public class Config extends Language {
     public boolean USERNAME_CHANGES;
     public boolean WORLDEDIT;
     public int MAXIMUM_POOL_SIZE;
+    public int CLICKHOUSE_PORT;
     public int MYSQL_PORT;
     public int DEFAULT_RADIUS;
+    public int DUCKDB_THREADS;
     public int MAX_RADIUS;
 
     static {
         DEFAULT_VALUES.put("donation-key", "");
-        DEFAULT_VALUES.put("use-mysql", "false");
+        DEFAULT_VALUES.put("database-type", "duckdb");
         DEFAULT_VALUES.put("table-prefix", "co_");
         DEFAULT_VALUES.put("mysql-host", "127.0.0.1");
         DEFAULT_VALUES.put("mysql-port", "3306");
         DEFAULT_VALUES.put("mysql-database", "database");
         DEFAULT_VALUES.put("mysql-username", "root");
         DEFAULT_VALUES.put("mysql-password", "");
+        DEFAULT_VALUES.put("clickhouse-host", "127.0.0.1");
+        DEFAULT_VALUES.put("clickhouse-port", "8123");
+        DEFAULT_VALUES.put("clickhouse-database", "default");
+        DEFAULT_VALUES.put("clickhouse-username", "default");
+        DEFAULT_VALUES.put("clickhouse-password", "");
+        DEFAULT_VALUES.put("clickhouse-tls", "false");
+        DEFAULT_VALUES.put("duckdb-memory-limit", "512MB");
+        DEFAULT_VALUES.put("duckdb-threads", "3");
+        DEFAULT_VALUES.put("duckdb-max-temp-directory-size", "10GB");
         DEFAULT_VALUES.put("language", "en");
         DEFAULT_VALUES.put("auto-purge", "false");
         DEFAULT_VALUES.put("check-updates", "true");
@@ -154,7 +175,10 @@ public class Config extends Language {
         DEFAULT_VALUES.put("worldedit", "true");
 
         HEADERS.put("donation-key", new String[] { "# CoreProtect is donationware. Obtain a donation key from coreprotect.net/donate/" });
-        HEADERS.put("use-mysql", new String[] { "# MySQL is optional and not required.", "# If you prefer to use MySQL, enable the following and fill out the fields." });
+        HEADERS.put("database-type", new String[] { "# Database engine used by CoreProtect. Valid values are duckdb, clickhouse, sqlite, and mysql.", "# Run /co reload or restart the server after changing the database engine or connection target." });
+        HEADERS.put("mysql-host", new String[] { "# Connection settings for MySQL." });
+        HEADERS.put("clickhouse-host", new String[] { "# Connection settings for ClickHouse 25.6 or newer.", "# The configured database must already exist; CoreProtect creates its prefixed tables and views.", "# ClickHouse currently supports one CoreProtect installation per database and table prefix.", "# Preserve .clickhouse-writer with this installation and do not copy it to another active server." });
+        HEADERS.put("duckdb-memory-limit", new String[] { "# Resource limits for the embedded DuckDB database.", "# The memory limit controls DuckDB's buffer manager; the temporary limit caps spill data and is not preallocated." });
         HEADERS.put("language", new String[] { "# If modified, will automatically attempt to translate languages phrases.", "# List of language codes: https://coreprotect.net/languages/" });
         HEADERS.put("auto-purge", new String[] { "# Automatically purge data older than the configured time.", "# Examples: 30d, 12w, 6mo. Set to false to disable." });
         HEADERS.put("check-updates", new String[] { "# If enabled, CoreProtect will check for updates when your server starts up.", "# If an update is available, you'll be notified via your server console.", });
@@ -214,6 +238,13 @@ public class Config extends Language {
         this.UNKNOWN_LOGGING = this.getBoolean("unknown-logging", false);
         this.MAXIMUM_POOL_SIZE = this.getInt("maximum-pool-size", 10);
         this.DONATION_KEY = this.getString("donation-key");
+        this.DATABASE_TYPE = this.getString("database-type");
+        this.CLICKHOUSE_HOST = this.getString("clickhouse-host");
+        this.CLICKHOUSE_PORT = this.getInt("clickhouse-port");
+        this.CLICKHOUSE_DATABASE = this.getString("clickhouse-database");
+        this.CLICKHOUSE_USERNAME = this.getString("clickhouse-username");
+        this.CLICKHOUSE_PASSWORD = this.getString("clickhouse-password");
+        this.CLICKHOUSE_TLS = this.getBoolean("clickhouse-tls");
         this.MYSQL = this.getBoolean("use-mysql");
         this.PREFIX = this.getString("table-prefix");
         this.MYSQL_HOST = this.getString("mysql-host");
@@ -221,6 +252,9 @@ public class Config extends Language {
         this.MYSQL_DATABASE = this.getString("mysql-database");
         this.MYSQL_USERNAME = this.getString("mysql-username");
         this.MYSQL_PASSWORD = this.getString("mysql-password");
+        this.DUCKDB_MEMORY_LIMIT = this.getString("duckdb-memory-limit");
+        this.DUCKDB_THREADS = this.getInt("duckdb-threads", 3);
+        this.DUCKDB_MAX_TEMP_DIRECTORY_SIZE = this.getString("duckdb-max-temp-directory-size");
         this.LANGUAGE = this.getString("language");
         this.AUTO_PURGE = this.getString("auto-purge");
         this.AUTO_PURGE_TIME = this.getString("auto-purge-time");
@@ -350,6 +384,10 @@ public class Config extends Language {
         this.config.clear();
     }
 
+    public boolean hasOption(String key) {
+        return this.config.containsKey(key);
+    }
+
     public void loadDefaults() {
         this.clearConfig();
         this.readValues();
@@ -390,6 +428,7 @@ public class Config extends Language {
             final Config temp = new Config();
             temp.loadDefaults();
             temp.addMissingOptions(globalFile);
+            map.put("config", Files.readAllBytes(globalFile.toPath()));
         }
 
         for (final File worldConfigFile : configFolder.listFiles((File file) -> file.getName().endsWith(".yml"))) {
@@ -410,8 +449,12 @@ public class Config extends Language {
             // we call reloads asynchronously
             // for now this solution is good enough to ensure we only modify on the main thread
             final CompletableFuture<Void> complete = new CompletableFuture<>();
+            final CompletableFuture<Void> shutdown = Consumer.databaseReloadShutdownSignal();
 
             Scheduler.runTask(CoreProtect.getInstance(), () -> {
+                if (shutdown.isDone()) {
+                    return;
+                }
                 try {
                     parseConfig(data);
                 }
@@ -425,6 +468,11 @@ public class Config extends Language {
                 complete.complete(null);
             });
 
+            CompletableFuture.anyOf(complete, shutdown).join();
+            if (!complete.isDone()) {
+                complete.cancel(false);
+                throw new CancellationException("Configuration reload cancelled for shutdown");
+            }
             complete.join();
             return;
         }
@@ -477,7 +525,7 @@ public class Config extends Language {
 
             for (final Map.Entry<String, String> entry : DEFAULT_VALUES.entrySet()) {
                 final String key = entry.getKey();
-                final String defaultValue = entry.getValue();
+                String defaultValue = entry.getValue();
 
                 final String configuredValue = this.config.get(key);
 
@@ -486,6 +534,9 @@ public class Config extends Language {
                 }
                 if (key.equals("auto-purge") && VersionUtils.isCommunityEdition()) {
                     continue;
+                }
+                if (key.equals("database-type") && !writeHeader) {
+                    defaultValue = this.getBoolean("use-mysql") ? "mysql" : "sqlite";
                 }
 
                 final String[] header = HEADERS.get(key);

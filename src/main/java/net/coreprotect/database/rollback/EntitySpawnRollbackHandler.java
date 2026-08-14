@@ -29,8 +29,10 @@ import org.bukkit.inventory.ItemStack;
 import net.coreprotect.CoreProtect;
 import net.coreprotect.bukkit.BukkitAdapter;
 import net.coreprotect.config.ConfigHandler;
+import net.coreprotect.consumer.Consumer;
 import net.coreprotect.consumer.Queue;
 import net.coreprotect.database.statement.EntityStatement;
+import net.coreprotect.listener.player.EntityInteractionListener;
 import net.coreprotect.listener.player.InventoryChangeListener;
 import net.coreprotect.model.entity.EntitySpawnData;
 import net.coreprotect.model.entity.EntitySpawnRecord;
@@ -610,8 +612,9 @@ public final class EntitySpawnRollbackHandler {
                     transition = EntitySpawnData.killRestore(work.blockRowId, work.record.getRowId(), work.killRowId, finalLocation);
                 }
 
+                EntityInteractionListener.flushPendingInteractions(entity);
                 EntitySpawnTracking.removeWithoutRemovalLog(entity);
-                EntitySpawnTracking.forget(entity.getUniqueId());
+                EntitySpawnTracking.clearTracking(entity.getUniqueId());
                 completion.complete(context.transition(work, transition, 1));
             }
             catch (Exception e) {
@@ -1452,7 +1455,7 @@ public final class EntitySpawnRollbackHandler {
 
         boolean isCancelled() {
             int[] rollbackData = ConfigHandler.rollbackHash.get(userString);
-            return cancelled.get() || (rollbackData != null && rollbackData[3] == 2);
+            return cancelled.get() || (preview == 0 && Consumer.isPersistenceHalted()) || (rollbackData != null && rollbackData[3] == 2);
         }
 
         void cancel() {
