@@ -50,13 +50,13 @@ Maven:
 Requires JDK 25 and Maven. Build the plugin with:
 
 ```bash
-mvn -B verify
+mvn -B verify -Dproject.branch=development
 ```
 
 For a branch-specific build:
 
 ```bash
-mvn -B package -Dproject.branch=master
+mvn -B package -Dproject.branch=development
 ```
 
 ## Donation Keys
